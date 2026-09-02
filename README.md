@@ -1,6 +1,6 @@
-# Kubernetes on AWS - Complete CI/CD Pipeline with EKS and Private DockerHub Registry
+# Kubernetes on AWS - Complete CI/CD Pipeline with EKS and AWS ECR Registry
 
-This repository demonstrates an end-to-end CI/CD workflow for a Java Maven application deployed to Amazon EKS from Jenkins, while storing release images in a private Docker Hub repository.
+This repository demonstrates an end-to-end CI/CD workflow for a Java Maven application deployed to Amazon EKS from Jenkins, while storing release images in a private AWS ECR repository.
 
 ## Overview
 
@@ -10,7 +10,7 @@ Amazon Elastic Kubernetes Service (Amazon EKS) is a managed Kubernetes service t
 
 Jenkins is a self-contained, open-source automation server used to automate building, testing, and delivering/deploying software through repeatable pipelines.
 
-A Docker Hub private repository is a restricted-access image repository used to store, manage, and version container images so only authorized users/systems can pull and push them.
+Amazon Elastic Container Registry (ECR) is a fully managed AWS container image registry used to store, manage, scan, and version private Docker/OCI images for secure deployments.
 
 In this project, Jenkins performs version bumping, application build, Docker image build/push, Kubernetes deployment to EKS, and pushes version updates back to GitHub. 🚀
 
@@ -23,14 +23,14 @@ In this project, Jenkins performs version bumping, application build, Docker ima
 
 ## Demo Project
 
-Complete CI/CD Pipeline with EKS and private DockerHub registry
+Complete CI/CD Pipeline with EKS and AWS ECR
 
 ## Technologies used
 
 - Kubernetes
 - Jenkins
 - AWS EKS
-- Docker Hub
+- AWS ECR
 - Java
 - Maven
 - Linux
@@ -39,12 +39,13 @@ Complete CI/CD Pipeline with EKS and private DockerHub registry
 
 ## Project Description
 
-- Write K8s manifest files for Deployment and Service configuration
-- Integrate deploy step in the CI/CD pipeline to deploy newly built application image from DockerHub private registry to the EKS cluster
+- Create private AWS ECR Docker repository
+- Adjust Jenkinsfile to build and push Docker image to AWS ECR
+- Integrate deploying to K8s cluster in the CI/CD pipeline from AWS ECR private registry
 - So the complete CI/CD project we build has the following configuration:
     - a. CI step: Increment version
     - b. CI step: Build artifact for Java Maven application
-    - c. CI step: Build and push Docker image to DockerHub
+    - c. CI step: Build and push Docker image to AWS ECR
     - d. CD step: Deploy new application version to EKS cluster
     - e. CD step: Commit the version update
 
@@ -56,6 +57,7 @@ Complete CI/CD Pipeline with EKS and private DockerHub registry
 ├── Jenkinsfile
 ├── README.md
 ├── images/
+│   ├── aws-ecr-image-console.png
 │   ├── eksctl-cluster-cloudformation-stacks-console.png
 │   ├── eksctl-cluster-create-terminal.png
 │   ├── eksctl-cluster-nodes-console.png
@@ -78,7 +80,7 @@ Complete CI/CD Pipeline with EKS and private DockerHub registry
 flowchart LR
     Dev[Developer Pushes Code to GitHub] --> Jenkins[Jenkins Multibranch Pipeline]
     Jenkins -->|mvn clean package| Artifact[Java JAR Artifact]
-    Jenkins -->|docker build + docker push| DockerHub[Private Docker Hub Repository]
+    Jenkins -->|docker build + docker push| ECR[Private AWS ECR Repository]
     Jenkins -->|kubectl apply with envsubst| EKS[Amazon EKS Cluster]
     EKS --> Deployment[Kubernetes Deployment]
     Deployment --> Pods[Java Maven App Pods]
@@ -89,7 +91,7 @@ flowchart LR
 
 - Jenkins checks out the branch and increments Maven version.
 - Jenkins builds the application JAR and container image.
-- Jenkins authenticates to Docker Hub and pushes a versioned image tag.
+- Jenkins authenticates to AWS ECR and pushes a versioned image tag.
 - Jenkins authenticates to EKS with AWS credentials and kubeconfig.
 - Jenkins applies Deployment and Service manifests to roll out the new version.
 - Kubernetes pulls the private image using imagePullSecrets.
@@ -254,13 +256,30 @@ jenkins_aws_access_key_id
 jenkins-aws_secret_access_key
 ```
 
-Add Docker Hub credentials in Jenkins as username/password (used by pipeline ID: docker-hub-credentials).
+Create private AWS ECR repository "java-maven-app" and add Jenkins credentials for ECR as username/password:
 
-Create Kubernetes image pull secret to allow private Docker Hub pulls:
+- credential ID: ecr-credentials
+- username: AWS
+- password: ECR login password
+
+Screenshot:
+
+![AWS ECR repository image view](images/aws-ecr-image-console.png)
+
+Generate ECR login password and authenticate:
+
+```bash
+# get ecr-password, valid for 12 hours
+aws ecr get-login-password --region region
+
+aws ecr get-login-password --region region | docker login --username AWS --password-stdin aws_account_id.dkr.ecr.region.amazonaws.com
+```
+
+Create a secret in k8s to connect to ECR & pull the image:
 
 ```bash
 kubectl create secret docker-registry aws-registry-key \
---docker-server=docker.io \
+--docker-server=aws_account_id.dkr.ecr.region.amazonaws.com \
 --docker-username= \
 --docker-password=
 
@@ -279,7 +298,7 @@ Pipeline stages implemented in this repository:
 
 - Increment version in pom.xml
 - Build Java artifact with Maven
-- Build and push Docker image to private Docker Hub
+- Build and push Docker image to private AWS ECR
 - Deploy manifests to EKS using kubectl + envsubst
 - Commit version bump back to remote branch
 
@@ -294,8 +313,8 @@ pipeline {
         maven 'Maven'
     }
     environment {
-        DOCKER_REPO_SERVER = 'docker.io'
-        DOCKER_REPO = 'mustafa199b/demo'
+        DOCKER_REPO_SERVER = '911167908038.dkr.ecr.us-east-1.amazonaws.com'
+        DOCKER_REPO = "${DOCKER_REPO_SERVER}/java-maven-app"
     }
     stages {
         stage('increment version') {
@@ -323,7 +342,7 @@ pipeline {
             steps {
                 script {
                     echo "building the docker image..."
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', passwordVariable: 'PASS', usernameVariable: 'USER')]){
+                    withCredentials([usernamePassword(credentialsId: 'ecr-credentials', passwordVariable: 'PASS', usernameVariable: 'USER')]){
                         sh "docker build -t ${DOCKER_REPO}:${IMAGE_NAME} ."
                         sh "echo $PASS | docker login -u $USER --password-stdin ${DOCKER_REPO_SERVER}"
                         sh "docker push ${DOCKER_REPO}:${IMAGE_NAME}"
@@ -349,7 +368,7 @@ pipeline {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: 'github-credentials', passwordVariable: 'PASS', usernameVariable: 'USER')]){
-                        sh "git remote set-url origin https://${USER}:${PASS}@github.com/mustafa-saleh/kubernetes-aws-complete-ci-cd-pipeline-with-eks-and-private-dockerhub-registry.git"
+                        sh "git remote set-url origin https://${USER}:${PASS}@github.com/mustafa-saleh/kubernetes-aws-complete-ci-cd-pipeline-with-eks-and-aws-ecr.git"
                         sh 'git add .'
                         sh 'git commit -m "ci: version bump"'
                         sh 'git push origin HEAD:jenkins-jobs'
@@ -424,7 +443,7 @@ kubectl get pod
 
 kubectl get service
 
-# check the image registry is docker hub
+# check the image registry is ECR
 kubectl describe pod <pod-name>
 ```
 
@@ -441,10 +460,10 @@ kubectl logs <pod-name>
 
 - EKS cluster provisioning with eksctl is fast, but production readiness still depends on IAM, networking, and access design.
 - Running Jenkins in a container requires explicit installation of kubectl, aws-iam-authenticator, and envsubst to support Kubernetes CD.
-- Private Docker Hub integration requires both CI-side push credentials and cluster-side imagePullSecrets.
+- Private ECR integration requires both CI-side push credentials and cluster-side imagePullSecrets.
 - Parameterized Kubernetes manifests plus envsubst reduce duplication and enforce consistent release behavior.
 - Version bumping inside CI creates traceability between source version, image tag, Jenkins build number, and deployed workload.
-- Credential scoping in Jenkins (AWS, Docker Hub, GitHub) is critical for secure automation and least-privilege access.
+- Credential scoping in Jenkins (AWS, ECR, GitHub) is critical for secure automation and least-privilege access.
 
 ## Final result
 
@@ -452,7 +471,7 @@ The pipeline in this repository successfully executes a full CI/CD cycle. ✅
 
 - Increments Maven version
 - Builds and tests the Java application
-- Builds and pushes a private Docker Hub image
+- Builds and pushes a private AWS ECR image
 - Deploys the new image to Amazon EKS
 - Commits version updates back to GitHub branch
 
@@ -469,5 +488,5 @@ Evidence screenshots:
 - eksctl: https://github.com/eksctl-io/eksctl
 - kubectl install docs: https://kubernetes.io/docs/tasks/tools/
 - Jenkins documentation: https://www.jenkins.io/doc/
-- Docker Hub repositories: https://docs.docker.com/docker-hub/repos/
+- Amazon ECR user guide: https://docs.aws.amazon.com/AmazonECR/latest/userguide/what-is-ecr.html
 
