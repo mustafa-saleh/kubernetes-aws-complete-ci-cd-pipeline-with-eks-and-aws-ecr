@@ -815,7 +815,7 @@ Then create credentials for jenkins user with user tokens
 
 Create K8s cluster on AWS using eksctl
 
-For instruction on how to build the pipeline & create the docker image, refer to module 8 "https://github.com/mustafa-saleh/demo-module-8-build-automation-and-ci-cd-with-jenkins"
+For instruction on how to build the pipeline & create the docker image, refer to module 8 "https://github.com/mustafa-saleh/build-automation-and-ci-cd-with-jenkins"
 
 To deploy the "java-maven-app" to K8s, create a deployment "kubernetes/deployment.yaml" & service "kubernetes/service.yaml" files 
 
